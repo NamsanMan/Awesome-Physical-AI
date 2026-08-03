@@ -1,0 +1,157 @@
+name: Weekly discovery
+
+on:
+  schedule:
+    # Run every Sunday at 03:00 UTC.
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      create_issues:
+        description: "Create GitHub issues for selected discovery candidates"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      max_issues:
+        description: "Maximum number of issues to create"
+        required: true
+        default: "3"
+      include_ambiguous:
+        description: "Also create issues for ambiguous review bucket candidates"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      llm_review_mode:
+        description: "Optional LLM review mode for manual runs"
+        required: true
+        default: "off"
+        type: choice
+        options:
+          - "off"
+          - "ambiguous"
+          - "all"
+      llm_provider:
+        description: "LLM reviewer provider for manual runs"
+        required: true
+        default: "openrouter"
+        type: choice
+        options:
+          - "openrouter"
+          - "gemini"
+      max_ambiguous:
+        description: "Maximum ambiguous candidates to send to optional LLM review"
+        required: true
+        default: "5"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install optional Gemini reviewer dependency
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.llm_review_mode != 'off' && inputs.llm_provider == 'gemini' }}
+        run: pip install -U google-genai
+
+      - name: Restore seen cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/discover_seen.json
+          key: discover-seen-cache-${{ github.run_id }}
+          restore-keys: |
+            discover-seen-cache-
+
+      - name: Run discovery
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          LLM_REVIEW_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.llm_review_mode || 'off' }}
+          LLM_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && inputs.llm_provider || 'openrouter' }}
+          MAX_AMBIGUOUS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_ambiguous || '5' }}
+        run: |
+          mkdir -p .cache
+          ARGS=(
+            --days 7
+            --max-arxiv 20
+            --seen-cache .cache/discover_seen.json
+            --format json
+            --output discovery_candidates.json
+            --llm-review-mode "$LLM_REVIEW_MODE"
+            --max-ambiguous "$MAX_AMBIGUOUS"
+          )
+
+          if [ "$LLM_REVIEW_MODE" != "off" ]; then
+            if [ "$LLM_PROVIDER" = "openrouter" ]; then
+              if [ -z "$OPENROUTER_API_KEY" ]; then
+                echo "OPENROUTER_API_KEY secret is required when llm_provider=openrouter and llm_review_mode is not off." >&2
+                exit 1
+              fi
+              ARGS+=(--llm-review-command "python scripts/llm_reviewer_openrouter.py")
+            elif [ "$LLM_PROVIDER" = "gemini" ]; then
+              if [ -z "$GEMINI_API_KEY" ]; then
+                echo "GEMINI_API_KEY secret is required when llm_provider=gemini and llm_review_mode is not off." >&2
+                exit 1
+              fi
+              ARGS+=(--llm-review-command "python scripts/llm_reviewer_gemini.py")
+            else
+              echo "Unsupported LLM_PROVIDER: $LLM_PROVIDER" >&2
+              exit 1
+            fi
+          fi
+
+          python scripts/discover_new_cached.py "${ARGS[@]}"
+
+      - name: Upload discovery report
+        uses: actions/upload-artifact@v4
+        with:
+          name: discovery-candidates
+          path: |
+            discovery_candidates.json
+            .cache/discover_seen.json
+
+      - name: Create GitHub issues
+        if: ${{ github.event_name == 'schedule' || inputs.create_issues == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          MAX_ISSUES: ${{ github.event_name == 'workflow_dispatch' && inputs.max_issues || '3' }}
+          INCLUDE_AMBIGUOUS: ${{ github.event_name == 'workflow_dispatch' && inputs.include_ambiguous || 'false' }}
+          SOURCE_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          ARGS=""
+          if [ "$INCLUDE_AMBIGUOUS" = "true" ]; then
+            ARGS="$ARGS --include-review-bucket ambiguous"
+          fi
+
+          python scripts/discovery_issue_creator.py \
+            --input discovery_candidates.json \
+            --limit "$MAX_ISSUES" \
+            --source-run "$SOURCE_RUN" \
+            $ARGS
+
+      - name: Save seen cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/discover_seen.json
+          key: discover-seen-cache-${{ github.run_id }}
