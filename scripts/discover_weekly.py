@@ -1,19 +1,24 @@
-"""
-Seen-cache helpers for discovery automation.
+"""Run the discovery crawler with a persistent seen-paper cache.
 
-This module intentionally stays separate from discover_new.py so the core
-discovery/report generation script can remain focused on fetching, evaluating,
-and rendering candidates.
+This is the operational entry point used by the weekly GitHub Actions workflow.
+The discovery and evaluation rules remain in ``discover_new.py``; this module
+only filters papers already processed by earlier runs and persists that state.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlsplit
+
+import requests
+
+import discover_new as discover
 
 
 SEEN_CACHE_VERSION = 1
@@ -36,7 +41,7 @@ def empty_seen_cache() -> dict[str, Any]:
 
 
 def canonicalize_seen_url(url: str) -> str:
-    """Normalize paper URLs enough to keep arXiv versions from being reprocessed."""
+    """Normalize paper URLs so arXiv versions are treated as one paper."""
     url = (url or "").strip().rstrip(".,;:")
     if not url:
         return ""
@@ -150,3 +155,71 @@ def write_seen_cache(path: str, seen_cache: dict[str, Any]) -> None:
         json.dumps(seen_cache, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run weekly Physical AI discovery with seen-paper filtering.")
+    parser.add_argument("--days", type=int, default=7, help="Look back this many days.")
+    parser.add_argument("--max-arxiv", type=int, default=20, help="Maximum arXiv papers to fetch.")
+    parser.add_argument("--format", choices=("markdown", "json", "jsonl"), default="markdown")
+    parser.add_argument("--output", help="Write report to this file instead of stdout.")
+    parser.add_argument("--no-verify", action="store_true", help="Skip network checks for extracted official links.")
+    parser.add_argument("--seen-cache", required=True, help="JSON cache path for papers already processed.")
+    parser.add_argument(
+        "--no-update-seen-cache",
+        action="store_true",
+        help="Filter with --seen-cache but do not persist newly processed papers.",
+    )
+    parser.add_argument(
+        "--max-ambiguous",
+        type=int,
+        default=10,
+        help="Maximum ambiguous candidates to send to optional LLM review.",
+    )
+    parser.add_argument(
+        "--llm-review-mode",
+        choices=("off", "ambiguous", "all"),
+        default="off",
+        help="Choose which candidates are sent to --llm-review-command.",
+    )
+    parser.add_argument(
+        "--llm-review-command",
+        help="Command that receives candidate JSON on stdin and returns one JSON review object.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    try:
+        candidates = discover.fetch_arxiv_cs_ro(args.days, args.max_arxiv)
+        seen_cache = load_seen_cache(args.seen_cache)
+        fresh_candidates, skipped_candidates = filter_seen_candidates(candidates, seen_cache)
+        if skipped_candidates:
+            print(
+                f"seen-cache: skipped {len(skipped_candidates)} previously seen candidate(s)",
+                file=sys.stderr,
+            )
+
+        evaluated = discover.evaluate_candidates(
+            fresh_candidates,
+            verify_links=not args.no_verify,
+            llm_review_command=args.llm_review_command,
+            llm_review_mode=args.llm_review_mode,
+            max_ambiguous=args.max_ambiguous,
+        )
+
+        if not args.no_update_seen_cache:
+            update_seen_cache(seen_cache, evaluated + skipped_candidates)
+            write_seen_cache(args.seen_cache, seen_cache)
+    except requests.RequestException as exc:
+        print(f"error: discovery request failed: {exc}", file=sys.stderr)
+        return 1
+
+    discover.write_output(evaluated, args.format, args.output)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

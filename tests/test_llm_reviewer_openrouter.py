@@ -24,7 +24,16 @@ def test_normalize_review_fills_required_fields():
 
 
 def test_normalize_review_clamps_unknown_enums():
-    data = reviewer.normalize_review({"decision": "maybe", "entry_type": "other"})
+    data = reviewer.normalize_review(
+        {
+            "decision": "maybe",
+            "entry_type": "other",
+            "categories": ["manipulation", "invalid"],
+            "hardware_targets": "manipulator",
+        }
+    )
 
     assert data["decision"] == "needs_review"
     assert data["entry_type"] == "unclear"
+    assert data["categories"] == ["manipulation"]
+    assert data["hardware_targets"] == []

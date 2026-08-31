@@ -39,6 +39,28 @@ RESPONSE_SCHEMA = {
         "entry_summary": {"type": "string"},
         "maintainer_summary": {"type": "string"},
         "reason": {"type": "string"},
+        "model_name": {"type": "string"},
+        "organization": {"type": "string"},
+        "categories": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["manipulation", "locomotion", "navigation", "dexterous", "whole-body", "aerial"]},
+        },
+        "hardware_targets": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["manipulator", "humanoid", "quadruped", "biped", "mobile", "drone", "hand"]},
+        },
+        "learning_methods": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["VLA", "IL", "RL", "diffusion", "world_model", "sim2real"]},
+        },
+        "framework": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["pytorch", "jax", "tensorflow", "other"]},
+        },
+        "communication": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["ros2", "grpc", "lcm", "zenoh", "other"]},
+        },
     },
     "required": [
         "has_verified_model_link",
@@ -48,6 +70,13 @@ RESPONSE_SCHEMA = {
         "entry_summary",
         "maintainer_summary",
         "reason",
+        "model_name",
+        "organization",
+        "categories",
+        "hardware_targets",
+        "learning_methods",
+        "framework",
+        "communication",
     ],
 }
 
@@ -72,9 +101,11 @@ Rules:
 - Prefer needs_review over reject when the candidate is plausibly Physical AI but model/artifact availability is unclear.
 - The entry_summary should be a public-facing 2-3 sentence description that could be used as an Awesome-list item description.
 - The entry_summary must summarize the candidate's task, method/artifact, and Physical AI relevance, but must not invent artifact availability.
-- Always write maintainer_summary as a concise 2-3 sentence review note for weekly GitHub issue triage.
+- Always write maintainer_summary as a concise 2-3 sentence note for the generated model PR review.
 - The maintainer_summary should explain inclusion relevance, artifact availability, and any caution such as paper-only, unofficial, gated, placeholder, or inconclusive links.
 - Do not invent links, stars, datasets, models, code releases, benchmarks, or claims not present in the input.
+- model_name and organization must be supported by the title or an official repository namespace; otherwise return an empty string.
+- Metadata arrays are PR preparation annotations. Select only explicitly supported values from the schema enums.
 - Return only valid JSON matching the requested schema.
 """
 

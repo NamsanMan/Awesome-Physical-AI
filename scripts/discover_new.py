@@ -12,7 +12,7 @@ Hybrid review strategy:
 3. Report LLM review and public-facing entry summaries side-by-side with rule-based
    results instead of silently replacing deterministic decisions.
 4. Ask the LLM for both a public-facing entry_summary and a maintainer_summary
-   for candidates that will be reviewed in weekly GitHub issues.
+   for candidates that may be submitted through the repository's Add a Model flow.
 5. Track verified model/code/dataset/artifact links separately so that paper-only
    or project-page-only candidates are not confused with official model releases.
 """
@@ -638,7 +638,7 @@ def candidate_review_payload(candidate: Candidate) -> dict[str, Any]:
         "review_policy": {
             "llm_direct_review": True,
             "needs_human_maintainer_summary": True,
-            "intended_use": "weekly_github_issue_for_human_maintainer_review",
+            "intended_use": "weekly_add_model_submission_for_maintainer_pr_review",
         },
         "task": (
             "Review this candidate for Awesome-Physical-AI. Decide whether it is an official, open "
@@ -656,8 +656,15 @@ def candidate_review_payload(candidate: Candidate) -> dict[str, Any]:
             "entry_type": "model|dataset|tool|benchmark|simulator|paper_only|irrelevant|unclear",
             "decision": "accept|needs_review|reject",
             "entry_summary": "2-3 sentence public-facing Awesome-list description",
-            "maintainer_summary": "2-3 sentence human maintainer review note for weekly GitHub issue triage",
+            "maintainer_summary": "2-3 sentence note for reviewing an automatically generated model PR",
             "reason": "short explanation",
+            "model_name": "official model name when supported by evidence, otherwise empty",
+            "organization": "official repository owner or stated organization, otherwise empty",
+            "categories": "subset of Add a Model category values",
+            "hardware_targets": "subset of Add a Model hardware values",
+            "learning_methods": "subset of Add a Model learning values",
+            "framework": "subset of Add a Model framework values",
+            "communication": "subset of Add a Model communication values",
         },
     }
 
@@ -990,7 +997,7 @@ def main() -> int:
         help=(
             "Optional command that receives candidate JSON on stdin and returns one JSON object. "
             "The returned JSON may include has_verified_model_link, has_verified_artifact_link, "
-            "entry_type, decision, entry_summary, maintainer_summary, and reason."
+            "entry_type, decision, summaries, reason, and optional Add a Model metadata."
         ),
     )
     args = parser.parse_args()

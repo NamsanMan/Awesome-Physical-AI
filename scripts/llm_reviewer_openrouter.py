@@ -31,6 +31,13 @@ REQUIRED_FIELDS = {
     "entry_summary": "",
     "maintainer_summary": "",
     "reason": "",
+    "model_name": "",
+    "organization": "",
+    "categories": [],
+    "hardware_targets": [],
+    "learning_methods": [],
+    "framework": [],
+    "communication": [],
 }
 
 
@@ -54,9 +61,11 @@ Rules:
 - Prefer needs_review over reject when the candidate is plausibly Physical AI but model/artifact availability is unclear.
 - The entry_summary should be a public-facing 2-3 sentence description that could be used as an Awesome-list item description.
 - The entry_summary must summarize the candidate's task, method/artifact, and Physical AI relevance, but must not invent artifact availability.
-- Always write maintainer_summary as a concise 2-3 sentence review note for weekly GitHub issue triage.
+- Always write maintainer_summary as a concise 2-3 sentence note for the generated model PR review.
 - The maintainer_summary should explain inclusion relevance, artifact availability, and any caution such as paper-only, unofficial, gated, placeholder, or inconclusive links.
 - Do not invent links, stars, datasets, models, code releases, benchmarks, or claims not present in the input.
+- model_name and organization must be supported by the title or an official repository namespace; otherwise return an empty string.
+- Metadata arrays are optional PR preparation annotations. Select only explicitly supported values from the allowed lists below.
 - Return only valid JSON. Do not wrap it in markdown.
 
 Required JSON shape:
@@ -67,7 +76,14 @@ Required JSON shape:
   "decision": "accept" | "needs_review" | "reject",
   "entry_summary": string,
   "maintainer_summary": string,
-  "reason": string
+  "reason": string,
+  "model_name": string,
+  "organization": string,
+  "categories": ["manipulation" | "locomotion" | "navigation" | "dexterous" | "whole-body" | "aerial"],
+  "hardware_targets": ["manipulator" | "humanoid" | "quadruped" | "biped" | "mobile" | "drone" | "hand"],
+  "learning_methods": ["VLA" | "IL" | "RL" | "diffusion" | "world_model" | "sim2real"],
+  "framework": ["pytorch" | "jax" | "tensorflow" | "other"],
+  "communication": ["ros2" | "grpc" | "lcm" | "zenoh" | "other"]
 }
 """
 
@@ -129,8 +145,19 @@ def normalize_review(review: dict[str, Any]) -> dict[str, Any]:
     if normalized.get("decision") not in {"accept", "needs_review", "reject"}:
         normalized["decision"] = "needs_review"
 
-    for field in ("entry_summary", "maintainer_summary", "reason"):
+    for field in ("entry_summary", "maintainer_summary", "reason", "model_name", "organization"):
         normalized[field] = str(normalized.get(field) or "")
+
+    allowed_lists = {
+        "categories": {"manipulation", "locomotion", "navigation", "dexterous", "whole-body", "aerial"},
+        "hardware_targets": {"manipulator", "humanoid", "quadruped", "biped", "mobile", "drone", "hand"},
+        "learning_methods": {"VLA", "IL", "RL", "diffusion", "world_model", "sim2real"},
+        "framework": {"pytorch", "jax", "tensorflow", "other"},
+        "communication": {"ros2", "grpc", "lcm", "zenoh", "other"},
+    }
+    for field, allowed in allowed_lists.items():
+        values = normalized.get(field)
+        normalized[field] = [value for value in values if value in allowed] if isinstance(values, list) else []
 
     normalized.setdefault("status", "ok")
     return normalized

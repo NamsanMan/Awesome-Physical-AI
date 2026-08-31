@@ -6,26 +6,18 @@ on:
     - cron: "0 3 * * 0"
   workflow_dispatch:
     inputs:
-      create_issues:
-        description: "Create GitHub issues for selected discovery candidates"
+      submit_models:
+        description: "Submit PR-ready candidates through the Add a Model flow"
         required: true
         default: "false"
         type: choice
         options:
           - "false"
           - "true"
-      max_issues:
-        description: "Maximum number of issues to create"
+      max_submissions:
+        description: "Maximum number of Add a Model submissions"
         required: true
         default: "3"
-      include_ambiguous:
-        description: "Also create issues for ambiguous review bucket candidates"
-        required: true
-        default: "false"
-        type: choice
-        options:
-          - "false"
-          - "true"
       llm_review_mode:
         description: "Optional LLM review mode for manual runs"
         required: true
@@ -50,7 +42,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
   discover:
@@ -85,6 +76,8 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          DISCOVERY_BOT_TOKEN: ${{ secrets.DISCOVERY_BOT_TOKEN }}
+          SUBMIT_MODE: ${{ github.event_name == 'schedule' || inputs.submit_models == 'true' }}
           LLM_REVIEW_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.llm_review_mode || 'off' }}
           LLM_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && inputs.llm_provider || 'openrouter' }}
           MAX_AMBIGUOUS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_ambiguous || '5' }}
@@ -119,7 +112,12 @@ jobs:
             fi
           fi
 
-          python scripts/discover_new_cached.py "${ARGS[@]}"
+          if [ "$SUBMIT_MODE" = "true" ] && [ -z "$DISCOVERY_BOT_TOKEN" ]; then
+            echo "::warning::DISCOVERY_BOT_TOKEN is not configured; candidates will not be cached so a later run can retry submission."
+            ARGS+=(--no-update-seen-cache)
+          fi
+
+          python scripts/discover_weekly.py "${ARGS[@]}"
 
       - name: Upload discovery report
         uses: actions/upload-artifact@v4
@@ -129,25 +127,26 @@ jobs:
             discovery_candidates.json
             .cache/discover_seen.json
 
-      - name: Create GitHub issues
-        if: ${{ github.event_name == 'schedule' || inputs.create_issues == 'true' }}
+      - name: Submit PR-ready models through Add a Model
+        if: ${{ github.event_name == 'schedule' || inputs.submit_models == 'true' }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A normal GITHUB_TOKEN cannot trigger process-issue.yml from a created
+          # issue. Use a fine-grained PAT or GitHub App token with issues:write.
+          DISCOVERY_BOT_TOKEN: ${{ secrets.DISCOVERY_BOT_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          MAX_ISSUES: ${{ github.event_name == 'workflow_dispatch' && inputs.max_issues || '3' }}
-          INCLUDE_AMBIGUOUS: ${{ github.event_name == 'workflow_dispatch' && inputs.include_ambiguous || 'false' }}
+          MAX_SUBMISSIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_submissions || '3' }}
           SOURCE_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          ARGS=""
-          if [ "$INCLUDE_AMBIGUOUS" = "true" ]; then
-            ARGS="$ARGS --include-review-bucket ambiguous"
+          if [ -z "$DISCOVERY_BOT_TOKEN" ]; then
+            echo "::warning::Skipping Add a Model submission because DISCOVERY_BOT_TOKEN is not configured."
+            echo "::warning::Do not replace it with GITHUB_TOKEN; GitHub suppresses workflow runs caused by GITHUB_TOKEN events."
+            exit 0
           fi
 
-          python scripts/discovery_issue_creator.py \
+          python scripts/discovery_model_submitter.py \
             --input discovery_candidates.json \
-            --limit "$MAX_ISSUES" \
-            --source-run "$SOURCE_RUN" \
-            $ARGS
+            --limit "$MAX_SUBMISSIONS" \
+            --source-run "$SOURCE_RUN"
 
       - name: Save seen cache
         if: success()
