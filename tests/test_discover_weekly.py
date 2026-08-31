@@ -75,7 +75,10 @@ def test_workflow_uses_integrated_runner_and_dedicated_submission_token():
 
     assert "python scripts/discover_weekly.py" in workflow
     assert "python scripts/discovery_model_submitter.py" in workflow
+    assert "python scripts/llm_reviewer.py" in workflow
     assert "secrets.DISCOVERY_BOT_TOKEN" in workflow
     assert "ARGS+=(--no-update-seen-cache)" in workflow
     assert "discover_new_cached.py" not in workflow
     assert "discovery_issue_creator.py" not in workflow
+    assert "llm_reviewer_openrouter.py" not in workflow
+    assert "llm_reviewer_gemini.py" not in workflow

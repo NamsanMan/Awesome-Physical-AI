@@ -35,6 +35,10 @@ on:
         options:
           - "openrouter"
           - "gemini"
+      llm_model:
+        description: "Optional provider model ID; leave empty to use the provider default"
+        required: false
+        default: ""
       max_ambiguous:
         description: "Maximum ambiguous candidates to send to optional LLM review"
         required: true
@@ -80,6 +84,7 @@ jobs:
           SUBMIT_MODE: ${{ github.event_name == 'schedule' || inputs.submit_models == 'true' }}
           LLM_REVIEW_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.llm_review_mode || 'off' }}
           LLM_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && inputs.llm_provider || 'openrouter' }}
+          LLM_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.llm_model || '' }}
           MAX_AMBIGUOUS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_ambiguous || '5' }}
         run: |
           mkdir -p .cache
@@ -99,17 +104,16 @@ jobs:
                 echo "OPENROUTER_API_KEY secret is required when llm_provider=openrouter and llm_review_mode is not off." >&2
                 exit 1
               fi
-              ARGS+=(--llm-review-command "python scripts/llm_reviewer_openrouter.py")
             elif [ "$LLM_PROVIDER" = "gemini" ]; then
               if [ -z "$GEMINI_API_KEY" ]; then
                 echo "GEMINI_API_KEY secret is required when llm_provider=gemini and llm_review_mode is not off." >&2
                 exit 1
               fi
-              ARGS+=(--llm-review-command "python scripts/llm_reviewer_gemini.py")
             else
               echo "Unsupported LLM_PROVIDER: $LLM_PROVIDER" >&2
               exit 1
             fi
+            ARGS+=(--llm-review-command "python scripts/llm_reviewer.py")
           fi
 
           if [ "$SUBMIT_MODE" = "true" ] && [ -z "$DISCOVERY_BOT_TOKEN" ]; then
