@@ -292,5 +292,8 @@ def test_candidates_beyond_submission_limit_remain_retryable(tmp_path, monkeypat
     ])
     cache = json.loads(cache_path.read_text(encoding="utf-8"))
     statuses = [cache["seen"][item["url"]]["status"] for item in candidates]
+    reasons = [cache["seen"][item["url"]]["reason"] for item in candidates]
 
     assert statuses == ["submitted", "retry", "retry"]
+    assert reasons == ["add_model_issue_exists", "awaiting_submission", "awaiting_submission"]
+    assert all(cache["seen"][item["url"]]["next_check_at"] for item in candidates[1:])

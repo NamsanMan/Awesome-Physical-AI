@@ -275,7 +275,7 @@ def test_fetch_arxiv_cs_ro_uses_submitted_date_range_and_max_results(monkeypatch
     assert candidates[0].updated == "2026-06-25T00:00:00Z"
 
 
-def test_fetch_arxiv_cs_ro_rejects_truncated_result_set(monkeypatch):
+def test_fetch_arxiv_cs_ro_warns_and_returns_truncated_result_set(monkeypatch, capsys):
     class Response:
         status_code = 200
         headers = {}
@@ -290,12 +290,10 @@ def test_fetch_arxiv_cs_ro_rejects_truncated_result_set(monkeypatch):
 
     monkeypatch.setattr(dn, "http_get", lambda *args, **kwargs: Response())
 
-    try:
-        dn.fetch_arxiv_cs_ro(days=7, max_results=20)
-    except dn.ArxivResultLimitError as exc:
-        assert "matched 21 papers" in str(exc)
-    else:
-        raise AssertionError("Expected ArxivResultLimitError")
+    candidates = dn.fetch_arxiv_cs_ro(days=7, max_results=20)
+
+    assert candidates == []
+    assert "matched 21 papers; only the newest 20 are processed" in capsys.readouterr().err
 
 
 def test_fetch_arxiv_by_ids_requests_latest_versions(monkeypatch):
@@ -361,7 +359,7 @@ def test_fetch_recent_arxiv_updates_filters_by_updated_date(monkeypatch):
     assert calls[0]["sortBy"] == "lastUpdatedDate"
 
 
-def test_fetch_recent_arxiv_updates_rejects_truncation(monkeypatch):
+def test_fetch_recent_arxiv_updates_warns_and_returns_truncated_results(monkeypatch, capsys):
     class Response:
         status_code = 200
         headers = {}
@@ -380,16 +378,37 @@ def test_fetch_recent_arxiv_updates_rejects_truncation(monkeypatch):
 
     monkeypatch.setattr(dn, "http_get", lambda *args, **kwargs: Response())
 
-    try:
-        dn.fetch_recent_arxiv_updates(
-            days=7,
-            max_results=1,
-            now=dn.datetime(2026, 2, 10, tzinfo=dn.timezone.utc),
-        )
-    except dn.ArxivResultLimitError as exc:
-        assert "at least 1 cs.RO papers" in str(exc)
-    else:
-        raise AssertionError("Expected ArxivResultLimitError")
+    candidates = dn.fetch_recent_arxiv_updates(
+        days=7,
+        max_results=1,
+        now=dn.datetime(2026, 2, 10, tzinfo=dn.timezone.utc),
+    )
+
+    assert [candidate.title for candidate in candidates] == ["Recent revision"]
+    assert "older revisions in this window were not fetched" in capsys.readouterr().err
+
+
+def test_evaluate_candidates_skips_link_checks_for_rule_based_reject(monkeypatch):
+    monkeypatch.setattr(dn, "load_yaml_entries", lambda: [])
+
+    def unexpected_verify(_url):
+        raise AssertionError("verify_link should not be called")
+
+    monkeypatch.setattr(dn, "verify_link", unexpected_verify)
+    candidate = _candidate(
+        title="End-to-End Autonomous Driving Dataset",
+        summary="A traffic and lane detection benchmark for self driving.",
+        links=[
+            "https://arxiv.org/abs/2601.00001",
+            "https://github.com/example/driving",
+        ],
+    )
+
+    result = dn.evaluate_candidates([candidate], verify_links=True)
+
+    assert result[0].review_bucket == "reject"
+    assert result[0].checks[0].status == "not_checked"
+    assert result[0].checks[0].reason == "skipped: rule-based reject"
 
 
 def test_evaluate_candidates_runs_llm_review_command(monkeypatch):

@@ -121,7 +121,7 @@ def test_retry_candidate_is_rechecked_when_due_or_revision_changes():
     assert fresh == [] and skipped == [revised]
 
 
-def test_submission_ready_candidate_retries_next_week_until_submitted():
+def test_verified_release_waits_for_submitter_decision():
     candidate = SimpleNamespace(
         source="arxiv",
         title="RoboPolicy",
@@ -142,6 +142,13 @@ def test_submission_ready_candidate_retries_next_week_until_submitted():
     )
     entry = cache["seen"]["https://arxiv.org/abs/2601.00001"]
 
+    # Weekly records the evaluation result; only the submitter knows whether
+    # this candidate was submitted or deferred by the per-run limit.
+    assert entry["status"] == "terminal"
+    assert entry["reason"] == "not_submitted"
+    assert entry["next_check_at"] == ""
+
+    weekly.mark_seen_deferred(cache, {candidate.url}, seen_at="2026-01-01T00:00:00Z")
     assert entry["status"] == "retry"
     assert entry["reason"] == "awaiting_submission"
     assert entry["next_check_at"] == "2026-01-08T00:00:00Z"
@@ -149,6 +156,29 @@ def test_submission_ready_candidate_retries_next_week_until_submitted():
     weekly.mark_seen_submitted(cache, {candidate.url}, seen_at="2026-01-02T00:00:00Z")
     assert entry["status"] == "submitted"
     assert entry["next_check_at"] == ""
+
+
+def test_not_submitted_candidate_is_rechecked_after_revision():
+    key = "https://arxiv.org/abs/2601.00001"
+    seen_cache = {
+        "version": 2,
+        "seen": {
+            key: {
+                "status": "terminal",
+                "reason": "not_submitted",
+                "arxiv_updated": "2026-01-01T00:00:00Z",
+                "next_check_at": "",
+            }
+        },
+    }
+    revised = Candidate(updated="2026-01-10T00:00:00Z", arxiv_version="v2")
+
+    fresh, skipped = weekly.filter_seen_candidates(
+        [revised], seen_cache, now="2026-01-15T00:00:00Z"
+    )
+
+    assert fresh == [revised]
+    assert skipped == []
 
 
 def test_placeholder_candidate_is_scheduled_for_recheck():
@@ -205,11 +235,11 @@ def test_report_only_run_does_not_create_seen_cache(tmp_path, monkeypatch):
     assert not cache_path.exists()
 
 
-def test_truncated_arxiv_run_does_not_create_seen_cache(tmp_path, monkeypatch):
+def test_request_failure_does_not_create_seen_cache(tmp_path, monkeypatch):
     cache_path = tmp_path / "seen.json"
 
     def fail_fetch(*_args):
-        raise weekly.discover.ArxivResultLimitError("too many papers")
+        raise weekly.requests.RequestException("network error")
 
     monkeypatch.setattr(weekly.discover, "fetch_arxiv_cs_ro", fail_fetch)
 

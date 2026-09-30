@@ -723,10 +723,6 @@ def arxiv_submitted_date_range(days: int) -> str:
     return f"[{start:%Y%m%d%H%M} TO {end:%Y%m%d%H%M}]"
 
 
-class ArxivResultLimitError(RuntimeError):
-    """Raised when an arXiv query would silently truncate its result set."""
-
-
 def parse_arxiv_feed(xml: str) -> tuple[list[Candidate], int | None]:
     root = ET.fromstring(xml)
     ns = {
@@ -790,8 +786,10 @@ def fetch_arxiv_cs_ro(days: int, max_results: int) -> list[Candidate]:
     response.raise_for_status()
     candidates, total_results = parse_arxiv_feed(response.text)
     if total_results is not None and total_results > max_results:
-        raise ArxivResultLimitError(
-            f"arXiv query matched {total_results} papers, exceeding --max-arxiv={max_results}"
+        print(
+            f"warning: arXiv query matched {total_results} papers; only the newest "
+            f"{max_results} are processed (--max-arxiv)",
+            file=sys.stderr,
         )
     return candidates
 
@@ -831,8 +829,10 @@ def fetch_recent_arxiv_updates(
         and datetime.fromisoformat(candidates[-1].updated.replace("Z", "+00:00")) >= cutoff
     )
     if len(candidates) == max_results and oldest_returned_is_recent:
-        raise ArxivResultLimitError(
-            f"at least {max_results} cs.RO papers were updated within {days} days"
+        print(
+            f"warning: at least {max_results} cs.RO papers were updated within {days} days; "
+            "older revisions in this window were not fetched",
+            file=sys.stderr,
         )
     return recent
 
@@ -888,11 +888,16 @@ def evaluate_candidates(
             url for url in candidate.links
             if classify_url(url) in {"github", "hf_model", "hf_dataset", "hf_space", "project", "publication"}
         ]
-        if verify_links:
+        rule_rejected = (
+            bool(candidate.exclusion_hits or candidate.duplicate_matches)
+            or candidate.relevance == "low"
+        )
+        if verify_links and not rule_rejected:
             candidate.checks = [verify_link(url) for url in official_candidate_links]
         else:
+            skip_reason = "--no-verify" if not verify_links else "skipped: rule-based reject"
             candidate.checks = [
-                LinkCheck(url=url, kind=classify_url(url), status="not_checked", reason="--no-verify")
+                LinkCheck(url=url, kind=classify_url(url), status="not_checked", reason=skip_reason)
                 for url in official_candidate_links
             ]
 
@@ -1091,7 +1096,7 @@ def main() -> int:
             llm_review_mode=args.llm_review_mode,
             max_ambiguous=args.max_ambiguous,
         )
-    except (requests.RequestException, ArxivResultLimitError) as exc:
+    except requests.RequestException as exc:
         print(f"error: discovery request failed: {exc}", file=sys.stderr)
         return 1
 

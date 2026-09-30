@@ -22,6 +22,7 @@ import requests
 from discover_weekly import (
     canonicalize_seen_url,
     load_seen_cache,
+    mark_seen_deferred,
     mark_seen_submitted,
     write_seen_cache,
 )
@@ -486,9 +487,9 @@ def main(argv: list[str] | None = None) -> int:
 
     existing_keys = existing_discovery_keys(repo=args.repo, token=args.token)
     submitted_keys = {submission.key for submission in eligible if submission.key in existing_keys}
-    submissions = [submission for submission in eligible if submission.key not in existing_keys]
-    if args.limit > 0:
-        submissions = submissions[:args.limit]
+    pending = [submission for submission in eligible if submission.key not in existing_keys]
+    submissions = pending[:args.limit] if args.limit > 0 else pending
+    deferred_keys = {submission.key for submission in pending[len(submissions):]}
 
     for key in sorted(submitted_keys):
         print(f"Skipped existing Add a Model submission: {key}")
@@ -499,9 +500,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Created Add a Model issue (automatic PR trigger): {url}")
         submitted_keys.add(submission.key)
 
-    if args.seen_cache and submitted_keys:
+    for key in sorted(deferred_keys):
+        print(f"Deferred to next run (submission limit reached): {key}")
+
+    if args.seen_cache and (submitted_keys or deferred_keys):
         seen_cache = load_seen_cache(args.seen_cache)
         mark_seen_submitted(seen_cache, submitted_keys)
+        mark_seen_deferred(seen_cache, deferred_keys)
         write_seen_cache(args.seen_cache, seen_cache)
     return 0
 

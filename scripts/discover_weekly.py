@@ -128,7 +128,11 @@ def filter_seen_candidates(
             continue
 
         status = meta.get("status")
-        revision_recheck = status == "retry" or meta.get("reason") in {"paper_only", "retry_exhausted"}
+        revision_recheck = status == "retry" or meta.get("reason") in {
+            "paper_only",
+            "not_submitted",
+            "retry_exhausted",
+        }
         revision_changed = bool(
             revision_recheck
             and getattr(candidate, "updated", "")
@@ -184,10 +188,10 @@ def candidate_cache_disposition(candidate: Any) -> tuple[str, str]:
         return "terminal", "low_relevance"
 
     availability = getattr(candidate, "artifact_availability", {}) or {}
-    if getattr(candidate, "relevance", "unknown") == "high" and (
-        availability.get("has_verified_model_link") or availability.get("has_verified_code_link")
-    ):
-        return "retry", "awaiting_submission"
+    if availability.get("has_verified_model_link") or availability.get("has_verified_code_link"):
+        # Submission readiness is decided by discovery_model_submitter, which
+        # overrides this with "submitted" or a 7-day "retry" when over the limit.
+        return "terminal", "not_submitted"
 
     if availability.get("has_verified_project_page"):
         return "retry", "project_without_release"
@@ -243,13 +247,9 @@ def update_seen_cache(
         current_updated = str(getattr(candidate, "updated", "") or "")
         revision_changed = bool(previous_updated and current_updated and previous_updated != current_updated)
         attempt_count = 1 if revision_changed else int(existing.get("attempt_count", 0) or 0) + 1
-        if (
-            status == "retry"
-            and reason != "awaiting_submission"
-            and attempt_count > len(RETRY_DELAYS_DAYS)
-        ):
+        if status == "retry" and attempt_count > len(RETRY_DELAYS_DAYS):
             status, reason = "terminal", "retry_exhausted"
-        retry_attempt = 0 if reason == "awaiting_submission" else attempt_count
+        retry_attempt = attempt_count
 
         seen[key] = {
             "title": candidate.title,
@@ -294,6 +294,38 @@ def mark_seen_submitted(
             "reason": "add_model_issue_exists",
             "last_checked_at": seen_at,
             "next_check_at": "",
+        })
+        seen[key] = meta
+
+    seen_cache["version"] = SEEN_CACHE_VERSION
+    return seen_cache
+
+
+def mark_seen_deferred(
+    seen_cache: dict[str, Any],
+    keys: list[str] | set[str],
+    *,
+    seen_at: str | None = None,
+) -> dict[str, Any]:
+    """Keep submission-ready candidates that missed this run's limit for next week."""
+    seen_at = seen_at or utc_now_iso()
+    seen = seen_cache.setdefault("seen", {})
+    if not isinstance(seen, dict):
+        seen = {}
+        seen_cache["seen"] = seen
+
+    for raw_key in keys:
+        key = canonicalize_seen_url(raw_key)
+        if not key:
+            continue
+        meta = seen.get(key, {})
+        if not isinstance(meta, dict):
+            meta = {}
+        meta.update({
+            "status": "retry",
+            "reason": "awaiting_submission",
+            "last_checked_at": seen_at,
+            "next_check_at": retry_at(seen_at, 0),
         })
         seen[key] = meta
 
@@ -397,7 +429,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.no_update_seen_cache:
             update_seen_cache(seen_cache, evaluated)
             write_seen_cache(args.seen_cache, seen_cache)
-    except (requests.RequestException, discover.ArxivResultLimitError) as exc:
+    except requests.RequestException as exc:
         print(f"error: discovery request failed: {exc}", file=sys.stderr)
         return 1
 
