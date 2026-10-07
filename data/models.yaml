@@ -386,3 +386,35 @@
   - cross-embodiment
   - generalist
   - transformer
+- id: adaptive-mean-flow
+  name: Adaptive Mean Flow
+  org: akselva
+  year: 2026
+  description_en: Adaptive Mean Flow (AMF) is a flow-based imitation learning method
+    designed for smooth, high-frequency, and fully closed-loop robot control. By accelerating
+    Flow Matching and incorporating trajectory consistency from previous steps, AMF
+    minimizes prediction latency for robotic manipulation.
+  description_ko: ''
+  github_url: https://github.com/akselva/Adaptive-mean-flow-RoboticIL
+  paper_url: https://arxiv.org/abs/2610.06089
+  hf_url: ''
+  project_url: ''
+  categories:
+  - manipulation
+  hardware:
+  - manipulator
+  learning:
+  - IL
+  framework: []
+  communication: []
+  stats:
+    github_stars: 0
+    github_forks: 0
+    hf_downloads: 0
+    last_updated: '2026-10-07'
+  added_date: '2026-10-07'
+  tags:
+  - action prediction
+  - imitation learning
+  - robot
+  - robotic
