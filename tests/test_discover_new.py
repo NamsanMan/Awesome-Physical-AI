@@ -413,14 +413,58 @@ def test_evaluate_candidates_skips_link_checks_for_rule_based_reject(monkeypatch
 
 def test_evaluate_candidates_runs_llm_review_command(monkeypatch):
     monkeypatch.setattr(dn, "load_yaml_entries", lambda: [])
-    candidate = _candidate()
+    monkeypatch.setattr(
+        dn,
+        "verify_link",
+        lambda url: dn.LinkCheck(url=url, kind=dn.classify_url(url), status="available"),
+    )
+    candidate = _candidate(links=[
+        "https://arxiv.org/abs/2601.00001",
+        "https://github.com/example/robot",
+    ])
     result = dn.evaluate_candidates(
         [candidate],
-        verify_links=False,
+        verify_links=True,
         llm_review_command="python3 -c \"import json; print(json.dumps({'decision':'reject','reason':'paper only'}))\"",
+        llm_review_mode="all",
     )
+    assert result[0].llm_review_selected is True
     assert result[0].llm_review["status"] == "ok"
     assert result[0].llm_review["decision"] == "reject"
+
+
+def test_all_llm_review_mode_only_selects_rule_eligible_candidates():
+    eligible = _candidate()
+    eligible.relevance = "high"
+    eligible.recommendation = "needs_review"
+    eligible.review_bucket = "normal"
+    eligible.artifact_availability = {"has_verified_model_link": True}
+
+    second_eligible = _candidate(title="Second eligible candidate")
+    second_eligible.relevance = "high"
+    second_eligible.recommendation = "needs_review"
+    second_eligible.review_bucket = "ambiguous"
+    second_eligible.artifact_availability = {"has_verified_code_link": True}
+
+    paper_only = _candidate(title="Paper only")
+    paper_only.relevance = "high"
+    paper_only.recommendation = "needs_review"
+    paper_only.review_bucket = "ambiguous"
+    paper_only.artifact_availability = {}
+
+    medium_relevance = _candidate(title="Medium relevance")
+    medium_relevance.relevance = "medium"
+    medium_relevance.recommendation = "needs_review"
+    medium_relevance.review_bucket = "ambiguous"
+    medium_relevance.artifact_availability = {"has_verified_code_link": True}
+
+    targets = dn.llm_review_targets(
+        [eligible, second_eligible, paper_only, medium_relevance],
+        llm_review_mode="all",
+        max_ambiguous=1,
+    )
+
+    assert targets == [eligible, second_eligible]
 
 
 def test_render_markdown_states_no_issues_created():
@@ -438,7 +482,7 @@ def test_render_markdown_states_no_issues_created():
     report = dn.render_markdown([candidate])
     assert "No GitHub issues were created" in report
     assert "Open Robot Manipulation Policy" in report
-    assert "Targeted for optional LLM review" in report
+    assert "Targeted for LLM review" in report
     assert "LLM decision" in report
     assert "LLM entry summary" in report
     assert "A public-facing summary." in report

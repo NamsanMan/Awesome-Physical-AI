@@ -202,6 +202,14 @@ def derive_description(candidate: dict[str, Any]) -> str:
 def build_model_submission(candidate: dict[str, Any]) -> tuple[ModelSubmission | None, list[str]]:
     reasons: list[str] = []
     availability = candidate.get("artifact_availability") or {}
+    llm_review = candidate.get("llm_review") or {}
+
+    if llm_review.get("status") != "ok":
+        reasons.append("LLM review did not complete successfully")
+    elif llm_review.get("decision") != "accept":
+        reasons.append("LLM review did not accept the candidate")
+    elif llm_review.get("entry_type") != "model":
+        reasons.append("LLM review did not classify the candidate as a model")
 
     if candidate.get("recommendation") != "needs_review" or candidate.get("review_bucket") == "reject":
         reasons.append("candidate is not eligible for maintainer review")
@@ -253,7 +261,6 @@ def build_model_submission(candidate: dict[str, Any]) -> tuple[ModelSubmission |
             " ".join(str(hit) for hit in candidate.get("keyword_hits") or []),
         ]
     )
-    llm_review = candidate.get("llm_review") or {}
     categories = normalized_llm_list(llm_review, "categories", VALID_CATEGORIES) or infer_terms(
         evidence_text, CATEGORY_TERMS
     )
@@ -313,6 +320,8 @@ def select_submissions(
     submissions: list[ModelSubmission] = []
     skipped: list[tuple[str, list[str]]] = []
     for candidate in candidates:
+        if not candidate.get("llm_review_selected"):
+            continue
         submission, reasons = build_model_submission(candidate)
         if submission is None:
             skipped.append((clean_text(candidate.get("title"), limit=150) or "Untitled", reasons))

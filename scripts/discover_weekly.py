@@ -24,6 +24,7 @@ import discover_new as discover
 
 SEEN_CACHE_VERSION = 2
 RETRY_DELAYS_DAYS = (14, 30, 60, 120)
+WEEKLY_RETRY_REASONS = {"llm_review_failed"}
 ARXIV_ABS_RE = re.compile(r"^/abs/([^/?#]+)")
 
 
@@ -187,6 +188,18 @@ def candidate_cache_disposition(candidate: Any) -> tuple[str, str]:
     if getattr(candidate, "relevance", "unknown") == "low":
         return "terminal", "low_relevance"
 
+    if getattr(candidate, "llm_review_selected", False):
+        llm_review = getattr(candidate, "llm_review", {}) or {}
+        if llm_review.get("status") != "ok":
+            return "retry", "llm_review_failed"
+        decision = llm_review.get("decision")
+        if decision == "reject":
+            return "terminal", "llm_rejected"
+        if decision != "accept":
+            return "terminal", "llm_needs_review"
+        if llm_review.get("entry_type") != "model":
+            return "terminal", "llm_non_model"
+
     availability = getattr(candidate, "artifact_availability", {}) or {}
     if availability.get("has_verified_model_link") or availability.get("has_verified_code_link"):
         # Submission readiness is decided by discovery_model_submitter, which
@@ -247,9 +260,10 @@ def update_seen_cache(
         current_updated = str(getattr(candidate, "updated", "") or "")
         revision_changed = bool(previous_updated and current_updated and previous_updated != current_updated)
         attempt_count = 1 if revision_changed else int(existing.get("attempt_count", 0) or 0) + 1
-        if status == "retry" and attempt_count > len(RETRY_DELAYS_DAYS):
+        weekly_retry = reason in WEEKLY_RETRY_REASONS
+        if status == "retry" and not weekly_retry and attempt_count > len(RETRY_DELAYS_DAYS):
             status, reason = "terminal", "retry_exhausted"
-        retry_attempt = attempt_count
+        retry_attempt = 0 if weekly_retry else attempt_count
 
         seen[key] = {
             "title": candidate.title,
@@ -345,7 +359,7 @@ def write_seen_cache(path: str, seen_cache: dict[str, Any]) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run weekly Physical AI discovery with seen-paper filtering.")
     parser.add_argument("--days", type=int, default=7, help="Look back this many days.")
-    parser.add_argument("--max-arxiv", type=int, default=500, help="Maximum arXiv papers to fetch.")
+    parser.add_argument("--max-arxiv", type=int, default=750, help="Maximum arXiv papers to fetch.")
     parser.add_argument(
         "--max-rechecks",
         type=int,
@@ -371,7 +385,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--llm-review-mode",
         choices=("off", "ambiguous", "all"),
         default="off",
-        help="Choose which candidates are sent to --llm-review-command.",
+        help="Choose which rule-eligible candidates are sent to --llm-review-command.",
     )
     parser.add_argument(
         "--llm-review-command",

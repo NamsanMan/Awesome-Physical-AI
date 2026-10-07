@@ -158,6 +158,83 @@ def test_verified_release_waits_for_submitter_decision():
     assert entry["next_check_at"] == ""
 
 
+def test_llm_failure_is_retried_weekly_without_exhaustion():
+    candidate = SimpleNamespace(
+        source="arxiv",
+        title="RoboPolicy",
+        url="https://arxiv.org/abs/2601.00001",
+        published="2026-01-01",
+        updated="2026-01-01T00:00:00Z",
+        arxiv_version="v1",
+        duplicate_matches=[],
+        exclusion_hits=[],
+        review_bucket="normal",
+        relevance="high",
+        checks=[],
+        artifact_availability={"has_verified_code_link": True},
+        llm_review_selected=True,
+        llm_review={"status": "error", "reason": "provider timeout"},
+    )
+    cache = {
+        "version": 2,
+        "seen": {
+            candidate.url: {
+                "attempt_count": 10,
+                "arxiv_updated": candidate.updated,
+                "first_seen_at": "2026-01-01T00:00:00Z",
+            }
+        },
+    }
+
+    weekly.update_seen_cache(cache, [candidate], seen_at="2026-04-01T00:00:00Z")
+    entry = cache["seen"][candidate.url]
+
+    assert entry["status"] == "retry"
+    assert entry["reason"] == "llm_review_failed"
+    assert entry["attempt_count"] == 11
+    assert entry["next_check_at"] == "2026-04-08T00:00:00Z"
+
+
+def test_llm_decision_controls_cache_disposition():
+    base = {
+        "source": "arxiv",
+        "title": "RoboPolicy",
+        "url": "https://arxiv.org/abs/2601.00001",
+        "published": "2026-01-01",
+        "updated": "2026-01-01T00:00:00Z",
+        "arxiv_version": "v1",
+        "duplicate_matches": [],
+        "exclusion_hits": [],
+        "review_bucket": "normal",
+        "relevance": "high",
+        "checks": [],
+        "artifact_availability": {"has_verified_code_link": True},
+        "llm_review_selected": True,
+    }
+
+    accepted = SimpleNamespace(
+        **base,
+        llm_review={"status": "ok", "decision": "accept", "entry_type": "model"},
+    )
+    rejected = SimpleNamespace(
+        **base,
+        llm_review={"status": "ok", "decision": "reject", "entry_type": "model"},
+    )
+    undecided = SimpleNamespace(
+        **base,
+        llm_review={"status": "ok", "decision": "needs_review", "entry_type": "model"},
+    )
+    non_model = SimpleNamespace(
+        **base,
+        llm_review={"status": "ok", "decision": "accept", "entry_type": "dataset"},
+    )
+
+    assert weekly.candidate_cache_disposition(accepted) == ("terminal", "not_submitted")
+    assert weekly.candidate_cache_disposition(rejected) == ("terminal", "llm_rejected")
+    assert weekly.candidate_cache_disposition(undecided) == ("terminal", "llm_needs_review")
+    assert weekly.candidate_cache_disposition(non_model) == ("terminal", "llm_non_model")
+
+
 def test_not_submitted_candidate_is_rechecked_after_revision():
     key = "https://arxiv.org/abs/2601.00001"
     seen_cache = {
@@ -211,7 +288,7 @@ def test_weekly_cli_defaults_to_llm_off():
     args = weekly.build_parser().parse_args(["--seen-cache", "seen.json"])
 
     assert args.llm_review_mode == "off"
-    assert args.max_arxiv == 500
+    assert args.max_arxiv == 750
 
 
 def test_report_only_run_does_not_create_seen_cache(tmp_path, monkeypatch):
@@ -260,8 +337,10 @@ def test_workflow_uses_integrated_runner_and_dedicated_submission_token():
     assert "secrets.DISCOVERY_BOT_TOKEN" in workflow
     assert "ARGS+=(--no-update-seen-cache)" in workflow
     assert 'if [ "$SUBMIT_MODE" != "true" ]' in workflow
-    assert "--max-arxiv 500" in workflow
+    assert "--max-arxiv 750" in workflow
     assert "--max-rechecks 50" in workflow
+    assert "github.event_name == 'schedule' && 'all'" in workflow
+    assert 'if [ "$SUBMIT_MODE" = "true" ] && [ "$LLM_REVIEW_MODE" != "all" ]' in workflow
     assert "GITHUB_TOKEN: ${{ github.token }}" in workflow
     assert "--seen-cache .cache/discover_seen.json" in workflow
     assert "discover_new_cached.py" not in workflow

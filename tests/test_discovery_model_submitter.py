@@ -36,7 +36,8 @@ def candidate(**overrides):
                 "url": "https://github.com/robot-lab/robopolicy",
             },
         ],
-        "llm_review": {},
+        "llm_review_selected": True,
+        "llm_review": {"status": "ok", "decision": "accept", "entry_type": "model"},
     }
     base.update(overrides)
     return base
@@ -118,6 +119,8 @@ def test_add_model_body_is_compatible_with_existing_issue_parser():
 def test_llm_metadata_is_used_only_after_enum_filtering():
     llm_review = {
         "status": "ok",
+        "decision": "accept",
+        "entry_type": "model",
         "model_name": "Official RoboPolicy",
         "organization": "Robot Lab",
         "entry_summary": "An evidence-based model summary.",
@@ -138,6 +141,53 @@ def test_llm_metadata_is_used_only_after_enum_filtering():
     assert submission.learning_methods == ("IL",)
     assert submission.framework == ("pytorch",)
     assert submission.communication == ("ros2",)
+
+
+def test_submission_requires_successful_llm_acceptance():
+    failed, failed_reasons = submitter.build_model_submission(
+        candidate(llm_review={"status": "error", "reason": "provider timeout", "entry_type": "model"})
+    )
+    rejected, rejected_reasons = submitter.build_model_submission(
+        candidate(llm_review={"status": "ok", "decision": "reject", "entry_type": "model"})
+    )
+    needs_review, needs_review_reasons = submitter.build_model_submission(
+        candidate(llm_review={"status": "ok", "decision": "needs_review", "entry_type": "model"})
+    )
+
+    assert failed is None
+    assert "LLM review did not complete successfully" in failed_reasons
+    assert rejected is None
+    assert "LLM review did not accept the candidate" in rejected_reasons
+    assert needs_review is None
+    assert "LLM review did not accept the candidate" in needs_review_reasons
+
+
+def test_issue_uses_entry_summary_but_not_maintainer_summary():
+    submission, reasons = submitter.build_model_submission(
+        candidate(
+            llm_review={
+                "status": "ok",
+                "decision": "accept",
+                "entry_type": "model",
+                "entry_summary": "Public entry summary from the LLM.",
+                "maintainer_summary": "Internal discovery report summary.",
+            }
+        )
+    )
+
+    assert submission is not None and not reasons
+    body = submitter.render_add_model_issue(submission)
+    assert "Public entry summary from the LLM." in body
+    assert "Internal discovery report summary." not in body
+
+
+def test_submission_rejects_non_model_llm_acceptance():
+    submission, reasons = submitter.build_model_submission(
+        candidate(llm_review={"status": "ok", "decision": "accept", "entry_type": "dataset"})
+    )
+
+    assert submission is None
+    assert "LLM review did not classify the candidate as a model" in reasons
 
 
 def test_create_issue_uses_add_model_title_and_label(monkeypatch):

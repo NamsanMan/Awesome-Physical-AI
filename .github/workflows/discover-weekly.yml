@@ -19,7 +19,7 @@ on:
         required: true
         default: "3"
       llm_review_mode:
-        description: "Optional LLM review mode for manual runs"
+        description: "LLM review mode for manual report-only runs; submissions require all"
         required: true
         default: "off"
         type: choice
@@ -84,7 +84,8 @@ jobs:
           # Used only for authenticated public-repository link verification.
           GITHUB_TOKEN: ${{ github.token }}
           SUBMIT_MODE: ${{ github.event_name == 'schedule' || inputs.submit_models == 'true' }}
-          LLM_REVIEW_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.llm_review_mode || 'off' }}
+          # Scheduled runs review every candidate that passes the deterministic submission rules.
+          LLM_REVIEW_MODE: ${{ github.event_name == 'schedule' && 'all' || inputs.llm_review_mode || 'off' }}
           LLM_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && inputs.llm_provider || 'openrouter' }}
           LLM_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.llm_model || '' }}
           MAX_AMBIGUOUS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_ambiguous || '5' }}
@@ -92,9 +93,9 @@ jobs:
           mkdir -p .cache
           ARGS=(
             --days 7
-            # 30 completed weeks ending 2026-09-12: median=257, p95=360,
-            # max=375. 500 leaves 33% headroom above the observed maximum.
-            --max-arxiv 500
+            # 30 completed weeks ending 2026-09-12 had a maximum of 375, while
+            # a live 2026-10-07 run matched 554. 750 leaves 35% headroom.
+            --max-arxiv 750
             --max-rechecks 50
             --seen-cache .cache/discover_seen.json
             --format json
@@ -102,6 +103,11 @@ jobs:
             --llm-review-mode "$LLM_REVIEW_MODE"
             --max-ambiguous "$MAX_AMBIGUOUS"
           )
+
+          if [ "$SUBMIT_MODE" = "true" ] && [ "$LLM_REVIEW_MODE" != "all" ]; then
+            echo "Submitting models requires llm_review_mode=all so every rule-eligible candidate passes both gates." >&2
+            exit 1
+          fi
 
           if [ "$LLM_REVIEW_MODE" != "off" ]; then
             if [ "$LLM_PROVIDER" = "openrouter" ]; then

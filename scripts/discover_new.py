@@ -7,12 +7,10 @@ verifies those links, checks for duplicates against data/*.yaml, and emits a
 maintainer review report.
 
 Hybrid review strategy:
-1. Keep deterministic keyword/rule-based filtering as the default layer.
-2. Cap borderline candidates with --max-ambiguous for human or optional LLM review.
-3. Report LLM review and public-facing entry summaries side-by-side with rule-based
-   results instead of silently replacing deterministic decisions.
-4. Ask the LLM for both a public-facing entry_summary and a maintainer_summary
-   for candidates that may be submitted through the repository's Add a Model flow.
+1. Use deterministic keyword, duplicate, and verified-link checks as the first gate.
+2. Send every rule-eligible weekly candidate to the LLM as the second gate.
+3. Submit only candidates accepted by both gates; keep manual report-only modes.
+4. Ask the LLM for a public-facing entry_summary and a report-only maintainer_summary.
 5. Track verified model/code/dataset/artifact links separately so that paper-only
    or project-page-only candidates are not confused with official model releases.
 """
@@ -640,7 +638,7 @@ def candidate_review_payload(candidate: Candidate) -> dict[str, Any]:
         "review_policy": {
             "llm_direct_review": True,
             "needs_human_maintainer_summary": True,
-            "intended_use": "weekly_add_model_submission_for_maintainer_pr_review",
+            "intended_use": "weekly_add_model_submission_and_discovery_report",
         },
         "task": (
             "Review this candidate for Awesome-Physical-AI. Decide whether it is an official, open "
@@ -658,7 +656,7 @@ def candidate_review_payload(candidate: Candidate) -> dict[str, Any]:
             "entry_type": "model|dataset|tool|benchmark|simulator|paper_only|irrelevant|unclear",
             "decision": "accept|needs_review|reject",
             "entry_summary": "2-3 sentence public-facing Awesome-list description",
-            "maintainer_summary": "2-3 sentence note for reviewing an automatically generated model PR",
+            "maintainer_summary": "2-3 sentence note for the discovery report",
             "reason": "short explanation",
             "model_name": "official model name when supported by evidence, otherwise empty",
             "organization": "official repository owner or stated organization, otherwise empty",
@@ -859,10 +857,27 @@ def llm_review_targets(
 ) -> list[Candidate]:
     if llm_review_mode == "off":
         return []
-    if llm_review_mode == "all":
-        return [c for c in candidates if c.review_bucket != "reject"]
 
-    ambiguous = [c for c in candidates if c.review_bucket == "ambiguous"]
+    # LLM review is the second gate after deterministic checks. Do not spend a
+    # model call on candidates that the submitter would reject regardless of
+    # the LLM decision.
+    eligible = [
+        candidate
+        for candidate in candidates
+        if candidate.recommendation == "needs_review"
+        and candidate.review_bucket != "reject"
+        and candidate.relevance == "high"
+        and not candidate.duplicate_matches
+        and not candidate.exclusion_hits
+        and (
+            candidate.artifact_availability.get("has_verified_model_link")
+            or candidate.artifact_availability.get("has_verified_code_link")
+        )
+    ]
+    if llm_review_mode == "all":
+        return eligible
+
+    ambiguous = [candidate for candidate in eligible if candidate.review_bucket == "ambiguous"]
     return ambiguous[:max_ambiguous]
 
 
@@ -973,7 +988,7 @@ def render_markdown(candidates: list[Candidate]) -> str:
         "",
         "| LLM review | Count |",
         "|---|---:|",
-        f"| `targeted for optional review` | {llm_target_count} |",
+        f"| `targeted` | {llm_target_count} |",
         f"| `completed` | {llm_completed_count} |",
     ])
 
@@ -988,7 +1003,7 @@ def render_markdown(candidates: list[Candidate]) -> str:
             f"- Relevance: `{candidate.relevance}`",
             f"- Recommendation: `{candidate.recommendation}`",
             f"- Review bucket: `{candidate.review_bucket}`",
-            f"- Targeted for optional LLM review: `{candidate.llm_review_selected}`",
+            f"- Targeted for LLM review: `{candidate.llm_review_selected}`",
         ])
         if candidate.authors:
             lines.append(f"- Authors: {', '.join(candidate.authors[:8])}")

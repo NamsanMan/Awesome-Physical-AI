@@ -95,12 +95,14 @@ Rules:
 - Reject autonomous-driving-only, traffic-only, ADAS-only, unrelated, or duplicate entries.
 - Reject clearly unofficial reimplementations, fine-tunes, converted models, or community-only artifacts.
 - Mark paper-only entries as needs_review unless they are clearly irrelevant.
-- Treat a verified official model link as the strongest positive signal for inclusion.
+- The automatic submission path currently supports model entries only. Dataset, tool, benchmark, and simulator entries must use needs_review even when they are relevant and public.
+- A model may be accepted when either official public weights or an official public code repository is verified. Weights are not mandatory when the official implementation is available.
+- Treat a verified official model link as the strongest positive signal for inclusion, followed by a verified official code repository.
 - Do not treat a generic project page as a verified model release unless artifact_availability explicitly shows a verified model/code/dataset/space artifact link.
-- If has_verified_model_link is false, state that no verified model link was found in the reason and maintainer_summary.
+- If has_verified_model_link is false but official code is verified, describe it as a code-only model release rather than automatically requiring manual review.
 - Prefer needs_review over reject when the candidate is plausibly Physical AI but model/artifact availability is unclear.
 - entry_summary must be an evidence-based 2-3 sentence Awesome-list description and must not invent artifact availability.
-- maintainer_summary must be a concise 2-3 sentence note for the generated model PR review.
+- maintainer_summary must be a concise 2-3 sentence note for the discovery report.
 - model_name and organization must be supported by the title or an official repository namespace; otherwise return an empty string.
 - Metadata arrays are PR preparation annotations. Select only explicitly supported schema values.
 - Do not invent links, stars, datasets, models, code releases, benchmarks, or claims not present in the input.
